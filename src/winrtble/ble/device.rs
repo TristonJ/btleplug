@@ -29,6 +29,7 @@ pub type ConnectedEventHandler = Box<dyn Fn(bool) + Send>;
 pub struct BLEDevice {
     device: BluetoothLEDevice,
     connection_token: EventRegistrationToken,
+    gatt_services_token: EventRegistrationToken,
 }
 
 impl BLEDevice {
@@ -47,7 +48,7 @@ impl BLEDevice {
                         .ok()
                         .map_or(false, |v| v == BluetoothConnectionStatus::Connected);
                     connection_status_changed(is_connected);
-                    trace!("state {:?}", sender.ConnectionStatus());
+                    debug!("state {:?}", sender.ConnectionStatus());
                 }
 
                 Ok(())
@@ -56,9 +57,26 @@ impl BLEDevice {
             .ConnectionStatusChanged(&connection_status_handler)
             .map_err(|_| Error::Other("Could not add connection status handler".into()))?;
 
+        // Adding this listener, for some reason, fixes random connection issues on Windows 11
+        let gatt_services_handler = TypedEventHandler::new(|sender: &Option<BluetoothLEDevice>, _| {
+            if let Some(sender) = sender {
+                let services = sender
+                    .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Cached)
+                    .and_then(|op| op.get())
+                    .and_then(|result| result.Services())
+                    .and_then(|services| services.Size());
+                debug!("gatt services changed {:?}", services);
+            }
+            Ok(())
+        });
+        let gatt_services_token = device
+            .GattServicesChanged(&gatt_services_handler)
+            .map_err(|_| Error::Other("Could not add gatt services handler".into()))?;
+
         Ok(BLEDevice {
             device,
             connection_token,
+            gatt_services_token,
         })
     }
 
@@ -158,6 +176,13 @@ impl Drop for BLEDevice {
             .RemoveConnectionStatusChanged(self.connection_token);
         if let Err(err) = result {
             debug!("Drop:remove_connection_status_changed {:?}", err);
+        }
+
+        let result = self
+            .device
+            .RemoveGattServicesChanged(self.gatt_services_token);
+        if let Err(err) = result {
+            debug!("Drop:remove_gatt_services_changed {:?}", err);
         }
 
         let result = self.device.Close();
