@@ -99,6 +99,11 @@ impl BLECharacteristic {
     }
 
     pub async fn subscribe(&mut self, on_value_changed: NotifiyEventHandler) -> Result<()> {
+        if self.notify_token.is_some() {
+            log::debug!("Already subscribed");
+            return Ok(());
+        }
+
         {
             let value_handler = TypedEventHandler::new(
                 move |_: &Option<GattCharacteristic>, args: &Option<GattValueChangedEventArgs>| {
