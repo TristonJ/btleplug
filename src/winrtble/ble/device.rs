@@ -59,17 +59,18 @@ impl BLEDevice {
             .map_err(|_| Error::Other("Could not add connection status handler".into()))?;
 
         // Adding this listener, for some reason, fixes random connection issues on Windows 11
-        let gatt_services_handler = TypedEventHandler::new(|sender: &Option<BluetoothLEDevice>, _| {
-            if let Some(sender) = sender {
-                let services = sender
-                    .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Cached)
-                    .and_then(|op| op.get())
-                    .and_then(|result| result.Services())
-                    .and_then(|services| services.Size());
-                debug!("gatt services changed {:?}", services);
-            }
-            Ok(())
-        });
+        let gatt_services_handler =
+            TypedEventHandler::new(|sender: &Option<BluetoothLEDevice>, _| {
+                if let Some(sender) = sender {
+                    let services = sender
+                        .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Cached)
+                        .and_then(|op| op.get())
+                        .and_then(|result| result.Services())
+                        .and_then(|services| services.Size());
+                    debug!("gatt services changed {:?}", services);
+                }
+                Ok(())
+            });
         let gatt_services_token = device
             .GattServicesChanged(&gatt_services_handler)
             .map_err(|_| Error::Other("Could not add gatt services handler".into()))?;
@@ -118,15 +119,27 @@ impl BLEDevice {
         let async_result = service
             .GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)?
             .await?;
-        let status = async_result.Status();
-        if status == Ok(GattCommunicationStatus::Success) {
-            let results = async_result.Characteristics()?;
-            debug!("characteristics {:?}", results.Size());
-            Ok(results.into_iter().collect())
-        } else {
-            Err(Error::Other(
-                format!("get_characteristics for {:?} failed: {:?}", service, status).into(),
-            ))
+
+        match async_result.Status() {
+            Ok(GattCommunicationStatus::Success) => {
+                let results = async_result.Characteristics()?;
+                debug!("characteristics {:?}", results.Size());
+                Ok(results.into_iter().collect())
+            }
+            Ok(GattCommunicationStatus::ProtocolError) => Err(Error::Other(
+                format!(
+                    "get_characteristics for {:?} encountered a protocol error",
+                    service
+                )
+                .into(),
+            )),
+            Ok(status) => {
+                debug!("characteristic read failed due to {:?}", status);
+                Ok(vec![])
+            }
+            Err(e) => Err(Error::Other(
+                format!("get_characteristics for {:?} failed: {:?}", service, e).into(),
+            )),
         }
     }
 

@@ -48,19 +48,15 @@ use crate::platform::PeripheralId;
     derive(Serialize, Deserialize),
     serde(crate = "serde_cr")
 )]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum AddressType {
     Random,
+    #[default]
     Public,
 }
 
-impl Default for AddressType {
-    fn default() -> Self {
-        AddressType::Public
-    }
-}
-
 impl AddressType {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(v: &str) -> Option<AddressType> {
         match v {
             "public" => Some(AddressType::Public),
@@ -96,6 +92,7 @@ pub struct ValueNotification {
 
 bitflags! {
     /// A set of properties that indicate what operations are supported by a Characteristic.
+    #[derive(Default, Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy)]
     pub struct CharPropFlags: u8 {
         const BROADCAST = 0x01;
         const READ = 0x02;
@@ -105,12 +102,6 @@ bitflags! {
         const INDICATE = 0x20;
         const AUTHENTICATED_SIGNED_WRITES = 0x40;
         const EXTENDED_PROPERTIES = 0x80;
-    }
-}
-
-impl Default for CharPropFlags {
-    fn default() -> Self {
-        Self { bits: 0 }
     }
 }
 
