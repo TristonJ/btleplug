@@ -15,11 +15,10 @@ use crate::{api::BDAddr, winrtble::utils, Error, Result};
 use log::{debug, trace};
 use windows::{
     Devices::Bluetooth::{
-        BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice,
-        GenericAttributeProfile::{
+        BluetoothCacheMode, BluetoothConnectionStatus, BluetoothDeviceId, BluetoothLEDevice, GenericAttributeProfile::{
             GattCharacteristic, GattCommunicationStatus, GattDescriptor, GattDeviceService,
-            GattDeviceServicesResult,
-        },
+            GattDeviceServicesResult, GattSession,
+        }
     },
     Foundation::{EventRegistrationToken, TypedEventHandler},
 };
@@ -28,6 +27,7 @@ pub type ConnectedEventHandler = Box<dyn Fn(bool) + Send>;
 
 pub struct BLEDevice {
     device: BluetoothLEDevice,
+    session: Option<GattSession>,
     connection_token: EventRegistrationToken,
     services: Vec<GattDeviceService>,
 }
@@ -60,6 +60,7 @@ impl BLEDevice {
         Ok(BLEDevice {
             device,
             connection_token,
+            session: None,
             services: vec![],
         })
     }
@@ -73,18 +74,28 @@ impl BLEDevice {
             .device
             .GetGattServicesWithCacheModeAsync(cache_mode)
             .map_err(winrt_error)?;
+        log::debug!("Waiting on async op");
         let service_result = async_op.await.map_err(winrt_error)?;
         Ok(service_result)
     }
 
-    pub async fn connect(&self) -> Result<()> {
+    pub async fn connect(&mut self) -> Result<()> {
+        log::debug!("Checking if connected");
         if self.is_connected().await? {
             return Ok(());
         }
 
-        let service_result = self.get_gatt_services(BluetoothCacheMode::Uncached).await?;
-        let status = service_result.Status().map_err(|_| Error::DeviceNotFound)?;
-        utils::to_error(status)
+        log::debug!("Getting gatt session");
+        let device_id: BluetoothDeviceId = BluetoothDeviceId::FromId(&self.device.DeviceId()?)?;
+        let session = GattSession::FromDeviceIdAsync(&device_id)?.await?;
+        session.SetMaintainConnection(true)?;
+        self.session = Some(session);
+
+        // log::debug!("Getting gatt services");
+        // let service_result = self.get_gatt_services(BluetoothCacheMode::Uncached).await?;
+        // let status = service_result.Status().map_err(|_| Error::DeviceNotFound)?;
+        // utils::to_error(status)
+        Ok(())
     }
 
     async fn is_connected(&self) -> Result<bool> {
@@ -127,6 +138,7 @@ impl BLEDevice {
     pub async fn get_characteristic_descriptors(
         characteristic: &GattCharacteristic,
     ) -> Result<Vec<GattDescriptor>> {
+        log::debug!("Querying for descriptors");
         let async_result = characteristic
             .GetDescriptorsWithCacheModeAsync(BluetoothCacheMode::Uncached)?
             .await?;
@@ -136,6 +148,7 @@ impl BLEDevice {
             debug!("descriptors {:?}", results.Size());
             Ok(results.into_iter().collect())
         } else {
+            log::debug!("Error getting descriptor");
             Err(Error::Other(
                 format!(
                     "get_characteristic_descriptors for {:?} failed: {:?}",
@@ -148,7 +161,7 @@ impl BLEDevice {
 
     pub async fn discover_services(&mut self) -> Result<&[GattDeviceService]> {
         let winrt_error = |e| Error::Other(format!("{:?}", e).into());
-        let service_result = self.get_gatt_services(BluetoothCacheMode::Cached).await?;
+        let service_result = self.get_gatt_services(BluetoothCacheMode::Uncached).await?;
         let status = service_result.Status().map_err(winrt_error)?;
         if status == GattCommunicationStatus::Success {
             // We need to convert the IVectorView to a Vec, because IVectorView is not Send and so
@@ -180,6 +193,9 @@ impl Drop for BLEDevice {
             }
         });
 
+        if let Some(Err(err)) = self.session.as_ref().map(|s| s.Close()) {
+            debug!("Drop:session.Close {:?}", err);
+        }
         let result = self.device.Close();
         if let Err(err) = result {
             debug!("Drop:close {:?}", err);

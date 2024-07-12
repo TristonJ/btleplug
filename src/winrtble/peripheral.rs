@@ -367,7 +367,8 @@ impl ApiPeripheral for Peripheral {
         let shared_clone = Arc::downgrade(&self.shared);
         let adapter_clone = self.shared.adapter.clone();
         let address = self.shared.address;
-        let device = BLEDevice::new(
+        log::debug!("Creating new device");
+        let mut device = BLEDevice::new(
             self.shared.address,
             Box::new(move |is_connected| {
                 if let Some(shared) = shared_clone.upgrade() {
@@ -382,8 +383,10 @@ impl ApiPeripheral for Peripheral {
             }),
         )
         .await?;
-
+        log::debug!("Connecting to device");
         device.connect().await?;
+
+        log::debug!("Getting device lock");
         let mut d = self.shared.device.lock().await;
         *d = Some(device);
         self.shared.connected.store(true, Ordering::Relaxed);
@@ -408,9 +411,11 @@ impl ApiPeripheral for Peripheral {
         let mut device = self.shared.device.lock().await;
         if let Some(ref mut device) = *device {
             let gatt_services = device.discover_services().await?;
+            log::debug!("Got gatt services");
             for service in gatt_services {
                 let uuid = utils::to_uuid(&service.Uuid().unwrap());
                 if !self.shared.ble_services.contains_key(&uuid) {
+                    log::debug!("Getting chars for {:?}", uuid);
                     match BLEDevice::get_characteristics(service).await {
                         Ok(characteristics) => {
                             let characteristics =
@@ -430,6 +435,7 @@ impl ApiPeripheral for Peripheral {
                                     )
                                 });
 
+                            log::debug!("Waiting for descriptors");
                             let characteristics = futures::future::join_all(characteristics)
                                 .await
                                 .into_iter()
@@ -440,6 +446,7 @@ impl ApiPeripheral for Peripheral {
                                 })
                                 .collect();
 
+                            log::debug!("Inserting shared ble services");
                             self.shared.ble_services.insert(
                                 uuid,
                                 BLEService {
@@ -454,6 +461,7 @@ impl ApiPeripheral for Peripheral {
                     }
                 }
             }
+            log::debug!("Returning ok");
             return Ok(());
         }
         Err(Error::NotConnected)
