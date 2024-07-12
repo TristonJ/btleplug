@@ -398,9 +398,17 @@ impl ApiPeripheral for Peripheral {
     async fn disconnect(&self) -> Result<()> {
         // We need to clear the services because if this device is re-connected,
         // the cached service objects will no longer be valid (they must be refreshed).
-        self.shared.ble_services.clear();
+        log::debug!("Locking device");
         let mut device = self.shared.device.lock().await;
+        log::debug!("Clearing services");
+        let shared = self.shared.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            shared.ble_services.clear();
+        }).await {
+            log::warn!("Unable to clear ble services {}", e);
+        }
         *device = None;
+        log::debug!("Marking and emitting");
         self.shared.connected.store(false, Ordering::Relaxed);
         self.emit_event(CentralEvent::DeviceDisconnected(self.shared.address.into()));
         Ok(())

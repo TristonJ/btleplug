@@ -180,6 +180,7 @@ impl BLEDevice {
 
 impl Drop for BLEDevice {
     fn drop(&mut self) {
+        log::debug!("Dropping BLE device");
         let result = self
             .device
             .RemoveConnectionStatusChanged(self.connection_token);
@@ -187,15 +188,19 @@ impl Drop for BLEDevice {
             debug!("Drop:remove_connection_status_changed {:?}", err);
         }
 
+        log::debug!("Cleaning up services");
         self.services.iter().for_each(|service| {
             if let Err(err) = service.Close() {
                 debug!("Drop:remove_gatt_Service {:?}", err);
             }
         });
 
+        log::debug!("Stopping session");
         if let Some(Err(err)) = self.session.as_ref().map(|s| s.Close()) {
             debug!("Drop:session.Close {:?}", err);
         }
+
+        log::debug!("Closing device");
         let result = self.device.Close();
         if let Err(err) = result {
             debug!("Drop:close {:?}", err);
